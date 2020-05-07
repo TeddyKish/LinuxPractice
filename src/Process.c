@@ -4,48 +4,73 @@
  Author      : TeddyKish
  Version     :
  Copyright   : Your copyright notice
- Description : Hello World in C, Ansi-style
+ Description : Linux exercises
  ============================================================================
  */
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <signal.h>
+
+#define CHILD_PROCESS_FORK_VALUE (0)
+#define ERROR_VALUE (-1)
 
 static const unsigned int s_root_height = 4;
+static const unsigned int s_buffer_size = 100;
 
-void error_exit(void)
+void error_exit(const char* msg)
 {
-	printf("ERROR");
+	perror(msg);
 	exit(-1);
 }
 
-void recursive_double_fork(unsigned int recursive_level)
+void signal_handler(int signo)
 {
-	if (recursive_level == 0)
+	if (signo == SIGRTMIN)
 	{
-		return;
+		// Currently do nothing
 	}
+	else
+	{
+		error_exit("Unsupported signal\n");
+	}
+}
 
-	pid_t pid = fork();
-	if (pid == -1)
+void recursive_double_fork(unsigned int recursive_level, pid_t root_pid, char* placement)
+{
+	char* new_placement = (char*) malloc(s_buffer_size);
+	printf(placement);
+	printf("\n");
+
+	pid_t right_child_pid;
+	pid_t left_child_pid;
+
+	if (recursive_level != 0)
 	{
-		error_exit();
-	}
-	else if (pid == 0)
-	{
-		recursive_double_fork(recursive_level - 1);
-	}
-	else if (pid != 0)
-	{
-		pid = fork();
-		if (pid == -1)
+
+		left_child_pid = fork();
+		if (left_child_pid == ERROR_VALUE)
 		{
-			error_exit();
+			error_exit("Can't fork left child\n");
 		}
-		else if (pid == 0)
+		else if (left_child_pid == CHILD_PROCESS_FORK_VALUE)
 		{
-			recursive_double_fork(recursive_level - 1);
+			snprintf(new_placement, s_buffer_size, "%s->Left", placement);
+			recursive_double_fork(recursive_level - 1, root_pid, new_placement);
+		}
+		else
+		{
+			right_child_pid = fork();
+			if (right_child_pid == ERROR_VALUE)
+			{
+				error_exit("Can't fork right child\n");
+			}
+			else if (right_child_pid == CHILD_PROCESS_FORK_VALUE)
+			{
+				snprintf(new_placement, s_buffer_size, "%s->Right", placement);
+				recursive_double_fork(recursive_level - 1, root_pid, new_placement);
+			}
 		}
 	}
 
@@ -62,6 +87,14 @@ void recursive_double_fork(unsigned int recursive_level)
 			pause();
 		}
 	}
+	else
+	{
+		sleep(5);
+		printf("PID( %ld ): waiting to die\n", (long)getpid());
+		union sigval empty_union;
+		sigqueue(root_pid, SIGRTMIN, empty_union);
+		pause();
+	}
 
 	// currently it exits after the forks
 	exit(0);
@@ -69,8 +102,11 @@ void recursive_double_fork(unsigned int recursive_level)
 
 int main(void)
 {
-	// Ex2.0
-	printf("Root PID is: %ld\n", (long)getpid());
-	recursive_double_fork(s_root_height);
+	// Ex2.2
+	if (signal(SIGRTMIN, signal_handler) == SIG_ERR)
+	{
+		error_exit("Can't catch SIGRTMIN\n");
+	}
 
+	recursive_double_fork(s_root_height, getpid(), "I am Root");
 }
