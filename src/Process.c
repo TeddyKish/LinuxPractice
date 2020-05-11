@@ -20,7 +20,10 @@
 static const unsigned int s_root_height = 4;
 static const unsigned int s_buffer_size = 100;
 
-pid_t root_pid;
+pid_t root_pid = 0;
+pid_t right_child_pid = 0;
+pid_t left_child_pid = 0;
+
 int signal_sent[30];
 
 void error_exit(const char* msg)
@@ -29,29 +32,37 @@ void error_exit(const char* msg)
 	exit(-1);
 }
 
-void root_signal_handler(int signo)
+void death_signal_handler(int signo)
 {
-	int cond = 1;
-
-	while (cond)
+	if (signo != SIGRTMIN)
 	{
-		cond = 0;
+		error_exit("Death signal handler didn't receive SIGUSR1\n");
 
-		for (int i = 0; i < 30; i++)
-		{
-			if (signal_sent[i] == 0)
-			{
-				// If one of the signals wasn't received, continue iterating the while loop
-				cond = 1;
-				break;
-			}
-		}
 	}
+
+	// If the process isn't in the last level in the tree
+	if (left_child_pid != 0 && right_child_pid != 0)
+	{
+		union sigval empty_union;
+		sigqueue(left_child_pid, SIGRTMIN, empty_union);
+		sigqueue(right_child_pid, SIGRTMIN, empty_union);
+
+		waitpid(left_child_pid, NULL, 0);
+		waitpid(right_child_pid, NULL, 0);
+	}
+
+	if (root_pid == getpid())
+	{
+		system("echo -n ps says: && ps -A | grep Process | wc -l");
+	}
+
+	printf("I am dead: %ld\n", (long)getpid());
+	exit (0);
 }
 
 void general_signal_handler(int signo)
 {
-	if (!(SIGRTMIN <= signo && signo <= SIGRTMAX))
+	if (!(SIGRTMIN + 1 <= signo && signo <= SIGRTMAX))
 	{
 		error_exit("Unsupported signal\n");
 	}
@@ -64,9 +75,6 @@ void recursive_double_fork(unsigned int recursive_level, char* placement, int ra
 	int this_rtsig = range_end;
 	char* new_placement = (char*) malloc(s_buffer_size);
 	printf("%s \n", placement);
-
-	pid_t right_child_pid;
-	pid_t left_child_pid;
 
 	if (recursive_level != 0)
 	{
@@ -96,29 +104,58 @@ void recursive_double_fork(unsigned int recursive_level, char* placement, int ra
 			}
 		}
 	}
+	else
+	{
+		left_child_pid = 0;
+		right_child_pid = 0;
+	}
 
 	// If this is the root process
 	if (recursive_level == s_root_height)
 	{
 		printf("Root waiting for all the signals...\n");
 
-		// Invokes the root signal handler, that verifies that a signal from every child process has been received.
-		raise(SIGRTMIN);
+		// Verifies that a signal from every child process has been received.
+		int cond = 1;
+
+		while (cond)
+		{
+			cond = 0;
+
+			for (int i = 0; i < 30; i++)
+			{
+				if (signal_sent[i] == 0)
+				{
+					// If one of the signals wasn't received, continue iterating the while loop
+					cond = 1;
+					break;
+				}
+			}
+		}
 
 		printf("Root received all of the signals \n");
-	}
-	else
-	{
-		sleep(5);
-		printf("PID( %ld ): waiting to die (SIGNO: %d) \n", (long)getpid(), SIGRTMIN + this_rtsig);
-		union sigval empty_union;
-		sigqueue(root_pid, SIGRTMIN + this_rtsig, empty_union);
-		pause();
+
+		char pstree_command[s_buffer_size];
+		snprintf(pstree_command, s_buffer_size, "pstree %ld -c", (long)root_pid);
+		system(pstree_command);
+
+		system("echo -n ps says: && ps -A | grep Process | wc -l");
+		printf("Press any key to kill them all! \n");
+		getchar();
+
+		free(new_placement);
+		raise(SIGRTMIN);
 	}
 
-	// currently it exits after the forks
+	sleep(5);
+
+	printf("PID( %ld ): waiting to die (SIGNO: %d) \n", (long)getpid(), SIGRTMIN + this_rtsig);
+	union sigval empty_union;
+	sigqueue(root_pid, SIGRTMIN + this_rtsig, empty_union);
+
 	free(new_placement);
-	exit(0);
+	pause();
+
 }
 
 int main(void)
@@ -131,14 +168,14 @@ int main(void)
 		error_exit("Not enough RT-Signals");
 	}
 
-	struct sigaction root_sigac;
-	root_sigac.sa_flags = SA_RESTART | SA_RESETHAND;
-	root_sigac.sa_handler = root_signal_handler;
-	const struct sigaction* p_root_sigac = &root_sigac;
+	// Root registering all of the signal functions
+	struct sigaction death_action;
+	death_action.sa_handler = death_signal_handler;
+	const struct sigaction* p_death_action = &death_action;
 
-	if (sigaction(SIGRTMIN, p_root_sigac, NULL) == ERROR_VALUE)
+	if (sigaction(SIGRTMIN, p_death_action, NULL) == ERROR_VALUE)
 	{
-		error_exit("Can't register ROOT signal handler");
+		error_exit("Can't register DEATH signal handler");
 	}
 
 	struct sigaction sigac;
@@ -156,6 +193,6 @@ int main(void)
 		signal_sent[i - SIGRTMIN - 1] = 0;
 	}
 
-	printf("root pid is %ld\n", (long)getpid());
+	printf("root pid is %ld\n", (long)root_pid);
 	recursive_double_fork(s_root_height, "I am Root", 1, 31);
 }
