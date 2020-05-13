@@ -11,178 +11,101 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include <dirent.h>
 #include <ctype.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <fcntl.h>
+#include <signal.h>
 
-#define PROCESS_LIST_SIZE (500)
-#define BUFFER_SIZE (200)
 #define ERROR_VALUE (-1)
+#define STOP_CHARACTER ('=')
 
-typedef struct s_pid_cmd
-{
-	unsigned int pid;
-	unsigned char* comm;
-} pid_cmd;
+#define PIPE_READ_INDEX (0)
+#define PIPE_WRITE_INDEX (1)
 
 void error_exit(const char* msg)
 {
 	perror(msg);
-	exit(-1);
+	exit(ERROR_VALUE);
 }
 
-int is_process_dirname(const char* entryname, unsigned char type)
+void transform_character(char* c)
 {
-	if (type != DT_DIR)
+	if ('A' <= *c && *c <= 'Z')
 	{
-		return 0;
+		*c = tolower(*c);
 	}
-
-	while (*entryname != '\0')
+	else if ('a' <= *c && *c <= 'z')
 	{
-		if (!(isdigit(*entryname)))
-		{
-			return 0;
-		}
-
-		entryname++;
+		*c = toupper(*c);
 	}
-
-	return 1;
-}
-
-void reset_buffer(char* buffer, unsigned int size)
-{
-	for (int i = 0; i < size; i++)
-	{
-		buffer[i] = '\0';
-	}
-}
-
-void initialize_list(pid_cmd* list, unsigned int size)
-{
-	for (int i = 0; i < size; i++)
-	{
-		list[i].pid = -1;
-		list[i].comm = NULL;
-	}
-}
-
-void free_list(pid_cmd* list, unsigned int size)
-{
-	for (int i = 0; i < size; i++)
-	{
-		free(list[i].comm);
-	}
-}
-
-void save_process_list(pid_cmd* list, unsigned int size)
-{
-	DIR* proc = opendir("/proc");
-	struct dirent* curr_entry = readdir(proc);
-
-	char comm_filename[BUFFER_SIZE] = "";
-
-	unsigned int list_pos = 0;
-
-	while (curr_entry != NULL && list_pos < size)
-	{
-		if (is_process_dirname(curr_entry->d_name, curr_entry->d_type))
-		{
-			if (snprintf(comm_filename, BUFFER_SIZE, "/proc/%s/comm", curr_entry->d_name) < 0)
-			{
-				error_exit("snprintf failed \n");
-			}
-
-			int cmdline_fd = open(comm_filename, O_RDONLY);
-
-			if (cmdline_fd == ERROR_VALUE)
-			{
-				error_exit("Cannot open comm file\n");
-			}
-
-			list[list_pos].pid = atoi(curr_entry->d_name);
-			list[list_pos].comm = (char*) calloc(BUFFER_SIZE, 1);
-
-			if (read(cmdline_fd, list[list_pos].comm, BUFFER_SIZE - 1) == ERROR_VALUE)
-			{
-				error_exit("Couldn't read comm content\n");
-			}
-
-			reset_buffer(comm_filename, BUFFER_SIZE);
-			list_pos++;
-		}
-
-		curr_entry = readdir(proc);
-	}
-}
-
-void print_list(pid_cmd* list, unsigned int size)
-{
-	for (int i = 0; i < size; i++)
-	{
-		// We already iterated through all the processes
-		if (list[i].pid == -1)
-		{
-			break;
-		}
-
-		printf("%d %s", list[i].pid, list[i].comm);
-	}
-}
-
-int is_in_list(pid_cmd* list, unsigned int size, unsigned int pid)
-{
-	for (int i = 0; i < size; i++)
-	{
-		// We already iterated through all the processes
-		if (list[i].pid == -1)
-		{
-			return 0;
-		}
-
-		if (list[i].pid == pid)
-		{
-			return 1;
-		}
-	}
-
-	return 0;
 }
 
 int main(void)
 {
-	pid_cmd list[PROCESS_LIST_SIZE];
-	pid_cmd second_list[PROCESS_LIST_SIZE];
+	int parent_read_pipe[2];
+	int child_read_pipe[2];
 
-	initialize_list(list, PROCESS_LIST_SIZE);
-	initialize_list(second_list, PROCESS_LIST_SIZE);
+	pid_t pid;
+	char current_char = '\0';
 
-	save_process_list(list, PROCESS_LIST_SIZE);
-	print_list(list, PROCESS_LIST_SIZE);
-
-	printf("Press any char to scan again\n");
-	getchar();
-
-	save_process_list(second_list, PROCESS_LIST_SIZE);
-
-	for (int i = 0; i < PROCESS_LIST_SIZE; i++)
+	if (pipe(parent_read_pipe) < 0 || pipe(child_read_pipe) < 0)
 	{
-		if (second_list[i].pid == -1)
+		error_exit("Can't create pipes");
+	}
+
+	if ((pid = fork()) < 0)
+	{
+		error_exit("Failed to fork a child");
+	}
+	else if (pid > 0) // Parent
+	{
+		close(child_read_pipe[PIPE_READ_INDEX]);
+		close(parent_read_pipe[PIPE_WRITE_INDEX]);
+
+		printf("Enter characters to transform: \n");
+
+		while (1)
 		{
-			break;
+			while ((current_char = getchar()) == '\n');
+
+			if (current_char == STOP_CHARACTER)
+			{
+				break;
+			}
+
+			if (write(child_read_pipe[PIPE_WRITE_INDEX], &current_char, 1) != 1)
+			{
+				error_exit("Can't write to child read pipe");
+			}
+
+			if (read(parent_read_pipe[PIPE_READ_INDEX], &current_char, 1)  != 1)
+			{
+				error_exit("Can't read from parent read pipe");
+			}
+
+			printf("Transformed to -> %c\n", current_char);
 		}
 
-		if (!is_in_list(list, PROCESS_LIST_SIZE, second_list[i].pid))
+		kill(pid, SIGTERM);
+	}
+	else // Child
+	{
+		close(parent_read_pipe[PIPE_READ_INDEX]);
+		close(child_read_pipe[PIPE_WRITE_INDEX]);
+
+		while (1)
 		{
-			printf("New Process: %d %s", second_list[i].pid, second_list[i].comm);
+			if (read(child_read_pipe[PIPE_READ_INDEX], &current_char, 1) != 1)
+			{
+				error_exit("Can't read from child read pipe");
+			}
+
+			transform_character(&current_char);
+
+			if (write(parent_read_pipe[PIPE_WRITE_INDEX], &current_char, 1) != 1)
+			{
+				error_exit("Can't write to parent read pipe");
+			}
 		}
 	}
 
-	free_list(list, PROCESS_LIST_SIZE);
-	free_list(second_list, PROCESS_LIST_SIZE);
-
-	return (0);
+	return 0;
 }
