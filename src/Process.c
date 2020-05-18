@@ -13,12 +13,19 @@
 #include <unistd.h>
 #include <ctype.h>
 #include <signal.h>
+#include <sys/mman.h>
 
 #define ERROR_VALUE (-1)
-#define STOP_CHARACTER ('=')
 
-#define PIPE_READ_INDEX (0)
-#define PIPE_WRITE_INDEX (1)
+#define MAX_READ_SIZE (200)
+
+void handle_user_signal(int signo)
+{
+	if (signo != SIGUSR1)
+	{
+		error_exit("Received a signal different than SIGUSR1");
+	}
+}
 
 void error_exit(const char* msg)
 {
@@ -26,86 +33,65 @@ void error_exit(const char* msg)
 	exit(ERROR_VALUE);
 }
 
-void transform_character(char* c)
+void reverse_string(char* string)
 {
-	if ('A' <= *c && *c <= 'Z')
+	size_t size = strnlen(string, MAX_READ_SIZE - 1);
+	char tmp;
+
+	for (size_t i = 0; i < (size / 2); i++)
 	{
-		*c = tolower(*c);
-	}
-	else if ('a' <= *c && *c <= 'z')
-	{
-		*c = toupper(*c);
+		tmp = string[i];
+		string[i] = string[size - i - 1];
+		string[size - i - 1] = tmp;
 	}
 }
 
 int main(void)
 {
-	int parent_read_pipe[2];
-	int child_read_pipe[2];
+	void * shared_space = mmap(0, MAX_READ_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+
+	if (shared_space == MAP_FAILED)
+	{
+		error_exit("Can't map shared memory");
+	}
+
+	if (signal(SIGUSR1, handle_user_signal) == SIG_ERR)
+	{
+		error_exit("Can't handle SIGUSR1");
+	}
 
 	pid_t pid;
-	char current_char = '\0';
-
-	if (pipe(parent_read_pipe) < 0 || pipe(child_read_pipe) < 0)
-	{
-		error_exit("Can't create pipes");
-	}
 
 	if ((pid = fork()) < 0)
 	{
-		error_exit("Failed to fork a child");
+		error_exit("Can't fork child process");
 	}
 	else if (pid > 0) // Parent
 	{
-		close(child_read_pipe[PIPE_READ_INDEX]);
-		close(parent_read_pipe[PIPE_WRITE_INDEX]);
+		printf("Enter a string to reverse:\n");
 
-		printf("Enter characters to transform: \n");
-
-		while (1)
+		if (fgets((char *) shared_space, MAX_READ_SIZE, stdin) == NULL)
 		{
-			while ((current_char = getchar()) == '\n');
-
-			if (current_char == STOP_CHARACTER)
-			{
-				break;
-			}
-
-			if (write(child_read_pipe[PIPE_WRITE_INDEX], &current_char, 1) != 1)
-			{
-				error_exit("Can't write to child read pipe");
-			}
-
-			if (read(parent_read_pipe[PIPE_READ_INDEX], &current_char, 1)  != 1)
-			{
-				error_exit("Can't read from parent read pipe");
-			}
-
-			printf("Transformed to -> %c\n", current_char);
+			error_exit("Can't read user input");
 		}
 
-		kill(pid, SIGTERM);
+		// Notify child that the string has been read
+		kill(pid, SIGUSR1);
+
+		pause();
+
+		printf("Reversed: %s\n", shared_space);
 	}
 	else // Child
 	{
-		close(parent_read_pipe[PIPE_READ_INDEX]);
-		close(child_read_pipe[PIPE_WRITE_INDEX]);
+		// Wait for parent to read the user input to the shared space
+		pause();
 
-		while (1)
-		{
-			if (read(child_read_pipe[PIPE_READ_INDEX], &current_char, 1) != 1)
-			{
-				error_exit("Can't read from child read pipe");
-			}
+		reverse_string((char *) shared_space);
 
-			transform_character(&current_char);
-
-			if (write(parent_read_pipe[PIPE_WRITE_INDEX], &current_char, 1) != 1)
-			{
-				error_exit("Can't write to parent read pipe");
-			}
-		}
+		// Notify parent that the string has been reversed
+		kill((long) getppid(), SIGUSR1);
 	}
 
-	return 0;
+	exit(0);
 }
