@@ -14,18 +14,11 @@
 #include <ctype.h>
 #include <signal.h>
 #include <sys/mman.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 
 #define ERROR_VALUE (-1)
-
-#define MAX_READ_SIZE (200)
-
-void handle_user_signal(int signo)
-{
-	if (signo != SIGUSR1)
-	{
-		error_exit("Received a signal different than SIGUSR1");
-	}
-}
 
 void error_exit(const char* msg)
 {
@@ -33,9 +26,8 @@ void error_exit(const char* msg)
 	exit(ERROR_VALUE);
 }
 
-void reverse_string(char* string)
+void reverse_string(char* string, size_t size)
 {
-	size_t size = strnlen(string, MAX_READ_SIZE - 1);
 	char tmp;
 
 	for (size_t i = 0; i < (size / 2); i++)
@@ -46,52 +38,38 @@ void reverse_string(char* string)
 	}
 }
 
-int main(void)
+int main(int argc, char* argv[])
 {
-	void * shared_space = mmap(0, MAX_READ_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+	int fd = -1;
+	struct stat file_stat;
+
+	if (argc != 2)
+	{
+		printf("Usage: %s <filename>\n", argv[0]);
+		exit(-1);
+	}
+
+	if ((fd = open(argv[1], O_RDWR)) == ERROR_VALUE)
+	{
+		error_exit("Can't open file");
+	}
+
+	if (fstat(fd, &file_stat) == ERROR_VALUE)
+	{
+		error_exit("Can't get file info");
+	}
+
+	void * shared_space = mmap(NULL, file_stat.st_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
 
 	if (shared_space == MAP_FAILED)
 	{
 		error_exit("Can't map shared memory");
 	}
 
-	if (signal(SIGUSR1, handle_user_signal) == SIG_ERR)
-	{
-		error_exit("Can't handle SIGUSR1");
-	}
+	close(fd);
 
-	pid_t pid;
+	reverse_string((char *) shared_space, file_stat.st_size);
 
-	if ((pid = fork()) < 0)
-	{
-		error_exit("Can't fork child process");
-	}
-	else if (pid > 0) // Parent
-	{
-		printf("Enter a string to reverse:\n");
-
-		if (fgets((char *) shared_space, MAX_READ_SIZE, stdin) == NULL)
-		{
-			error_exit("Can't read user input");
-		}
-
-		// Notify child that the string has been read
-		kill(pid, SIGUSR1);
-
-		pause();
-
-		printf("Reversed: %s\n", shared_space);
-	}
-	else // Child
-	{
-		// Wait for parent to read the user input to the shared space
-		pause();
-
-		reverse_string((char *) shared_space);
-
-		// Notify parent that the string has been reversed
-		kill((long) getppid(), SIGUSR1);
-	}
-
+	printf("The file was reversed! \n");
 	exit(0);
 }
