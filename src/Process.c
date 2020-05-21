@@ -12,64 +12,43 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <ctype.h>
-#include <signal.h>
-#include <sys/mman.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <fcntl.h>
+#include <errno.h>
+#include <pthread.h>
 
 #define ERROR_VALUE (-1)
 
-void error_exit(const char* msg)
+void error_exit_en(int en, const char* msg)
 {
+	errno = en;
 	perror(msg);
 	exit(ERROR_VALUE);
 }
 
-void reverse_string(char* string, size_t size)
+void print_id(const char* msg)
 {
-	char tmp;
+	pthread_t tid = pthread_self();
+	pid_t pid = getpid();
+	printf("%s: PID = %lu, TID = %lu (0x%lx)\n", msg, (unsigned long) pid, (unsigned long) tid, (unsigned long) tid);
+}
 
-	for (size_t i = 0; i < (size / 2); i++)
-	{
-		tmp = string[i];
-		string[i] = string[size - i - 1];
-		string[size - i - 1] = tmp;
-	}
+void* thread_function(void* arg)
+{
+	print_id(" New Thread");
+	return (void *) 0;
 }
 
 int main(int argc, char* argv[])
 {
-	int fd = -1;
-	struct stat file_stat;
 
-	if (argc != 2)
+	pthread_t tid;
+	int err;
+
+	if ((err = pthread_create(&tid, NULL, thread_function, NULL)) != 0)
 	{
-		printf("Usage: %s <filename>\n", argv[0]);
-		exit(-1);
+		error_exit_en(err, "Can't create thread");
 	}
 
-	if ((fd = open(argv[1], O_RDWR)) == ERROR_VALUE)
-	{
-		error_exit("Can't open file");
-	}
-
-	if (fstat(fd, &file_stat) == ERROR_VALUE)
-	{
-		error_exit("Can't get file info");
-	}
-
-	void * shared_space = mmap(NULL, file_stat.st_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-
-	if (shared_space == MAP_FAILED)
-	{
-		error_exit("Can't map shared memory");
-	}
-
-	close(fd);
-
-	reverse_string((char *) shared_space, file_stat.st_size);
-
-	printf("The file was reversed! \n");
+	print_id("Main Thread");
+	sleep(3);
 	exit(0);
 }
