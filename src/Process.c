@@ -24,31 +24,36 @@ void error_exit_en(int en, const char* msg)
 	exit(ERROR_VALUE);
 }
 
-void print_id(const char* msg)
-{
-	pthread_t tid = pthread_self();
-	pid_t pid = getpid();
-	printf("%s: PID = %lu, TID = %lu (0x%lx)\n", msg, (unsigned long) pid, (unsigned long) tid, (unsigned long) tid);
-}
-
 void* thread_function(void* arg)
 {
-	print_id(" New Thread");
-	return (void *) 0;
+	char letter = *((char *) arg);
+	free(arg);
+
+	while (1)
+	{
+		printf("%c", letter);
+	}
 }
 
 int main(int argc, char* argv[])
 {
-
 	pthread_t tid;
+	char letter;
 	int err;
 
-	if ((err = pthread_create(&tid, NULL, thread_function, NULL)) != 0)
+	for (letter = 'A'; letter < 'Z'; letter++)
 	{
-		error_exit_en(err, "Can't create thread");
+		char* current_letter = (char *) malloc(sizeof(char));
+		*current_letter = letter;
+
+		if ((err = pthread_create(&tid, NULL, thread_function, (void *) current_letter)) != 0)
+		{
+			error_exit_en(err, "Thread creation failed");
+		}
 	}
 
-	print_id("Main Thread");
-	sleep(3);
-	exit(0);
+	while (1)
+	{
+		printf("%c", letter);
+	}
 }
