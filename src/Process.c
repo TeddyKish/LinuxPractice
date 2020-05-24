@@ -17,6 +17,8 @@
 
 #define ERROR_VALUE (-1)
 
+pthread_mutex_t printing_mutex = PTHREAD_MUTEX_INITIALIZER;
+
 void error_exit_en(int en, const char* msg)
 {
 	errno = en;
@@ -24,15 +26,33 @@ void error_exit_en(int en, const char* msg)
 	exit(ERROR_VALUE);
 }
 
+void perform_action(char letter)
+{
+	int i;
+
+	while (1)
+	{
+		pthread_mutex_lock(&printing_mutex);
+
+		for (i = 1; i <= 3; i++)
+		{
+			printf("%c", letter);
+		}
+
+		printf("\n");
+
+		fflush(stdout);
+
+		pthread_mutex_unlock(&printing_mutex);
+	}
+}
+
 void* thread_function(void* arg)
 {
 	char letter = *((char *) arg);
 	free(arg);
 
-	while (1)
-	{
-		printf("%c", letter);
-	}
+	perform_action(letter);
 }
 
 int main(int argc, char* argv[])
@@ -52,8 +72,5 @@ int main(int argc, char* argv[])
 		}
 	}
 
-	while (1)
-	{
-		printf("%c", letter);
-	}
+	perform_action(letter);
 }
