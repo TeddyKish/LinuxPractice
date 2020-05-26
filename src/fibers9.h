@@ -8,20 +8,20 @@
  *      Author: Teddy Kishinevsky
  */
 
-#include <sys/types.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <ctype.h>
+#include <errno.h>
 #include <setjmp.h>
+#include <time.h>
 
 #define MAX_FIBERS (100)
 
-typedef struct fiber_main_s
-{
-	int id;
-	jmp_buf context;
-	void* (*func_to_call) (void*);
-} fiber_main_t;
+typedef void* (*fiber_main_t) (void*);
 
 void fibers9_init();
-int  fibers9_create(fiber_main_t fiber_main, void* arg);
+int  fibers9_create(fiber_main_t func_to_call, void* arg);
 void fibers9_yield();
 int  fibers9_self();
 void fibers9_destroy();
