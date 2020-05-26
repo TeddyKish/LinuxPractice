@@ -8,11 +8,6 @@
  *      Author: Teddy Kishinevsky
  */
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <ctype.h>
-#include <errno.h>
 #include <setjmp.h>
 #include <time.h>
 
