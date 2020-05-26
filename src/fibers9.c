@@ -90,7 +90,7 @@ static fiber_t* get_lru_fiber()
 
 	for (int i = 1; i < MAX_FIBERS; i++)
 	{
-		if (fibers[i].last_usage <= lru_fiber_time && fibers[i].id != FIBERS9_NONACTIVE_FIBER_ID)
+		if ((fibers[i].last_usage <= lru_fiber_time) && (fibers[i].id != FIBERS9_NONACTIVE_FIBER_ID))
 		{
 			lru_fiber = &(fibers[i]);
 			lru_fiber_time = fibers[i].last_usage;
@@ -100,13 +100,19 @@ static fiber_t* get_lru_fiber()
 	return lru_fiber;
 }
 
-static void fiber_reset(fiber_t* target)
+static void reset_fiber(fiber_t* target)
 {
 	target->id = FIBERS9_NONACTIVE_FIBER_ID;
 	target->last_usage = 0;
 	target->func_to_call = NULL;
 	target->func_argument = NULL;
 	target->stack = NULL;
+}
+
+static void kill_fiber(fiber_t* dead_fiber)
+{
+	free(dead_fiber->stack);
+	reset_fiber(dead_fiber);
 }
 
 void fibers9_init()
@@ -117,14 +123,13 @@ void fibers9_init()
 
 	for (int i = 0; i < MAX_FIBERS; i++)
 	{
-		fiber_reset(&(fibers[i]));
+		reset_fiber(&(fibers[i]));
 	}
 
 	// The caller of fibers9_init is perceived as 'main', so it receives fid 0.
 	// Moreover, its function/arg/stack are all NULL, because they are never used.
-	current_fiber = fibers[0];
-	current_fiber.id = 0;
-	active_fiber_id = current_fiber.id;
+	fibers[0].id = 0;
+	active_fiber_id = fibers[0].id;
 }
 
 int fibers9_create(fiber_main_t func_to_call, void* arg)
@@ -132,6 +137,7 @@ int fibers9_create(fiber_main_t func_to_call, void* arg)
 	fiber_t* old_fiber = get_fiber_by_id(active_fiber_id);
 	old_fiber->last_usage = time(NULL);
 
+	volatile int self_id = active_fiber_id;
 	volatile int new_id = get_free_id();
 	fiber_t* new_fiber = get_free_fiber();
 
@@ -146,7 +152,9 @@ int fibers9_create(fiber_main_t func_to_call, void* arg)
 
 	active_fiber_id = new_fiber->id;
 
-	if (setjmp(old_fiber->context) == 0)
+	int setjmp_retval = setjmp(old_fiber->context);
+
+	if (setjmp_retval == 0)
 	{
 		void* new_stack = malloc(MB);
 		new_fiber->stack = new_stack; // Set the stack pointer in the fiber structure before modifying its value
@@ -159,27 +167,50 @@ int fibers9_create(fiber_main_t func_to_call, void* arg)
 		fiber_t* new_current_fiber = get_fiber_by_id(active_fiber_id);
 		void* fiber_retval = new_current_fiber->func_to_call(new_current_fiber->func_argument);
 
-		free(new_current_fiber->stack);
-
 		// After the new fiber returned, we switch to the "main" fiber by default
-		longjmp((get_fiber_by_id(0))->context, 1);
+		longjmp((get_fiber_by_id(0))->context, 2);
 	}
+	else if (setjmp_retval == 1)
+	{
+		// Return to regular execution
+	}
+	else if (setjmp_retval == 2)
+	{
+		// Kill the previous fiber
+		kill_fiber(get_fiber_by_id(active_fiber_id));
+	}
+
+	active_fiber_id = self_id;
 
 	return new_id;
 }
 
 void fibers9_yield()
 {
-	fiber_t* current_fiber = get_fiber_by_id(active_fiber_id); // Should never return NULL
+	volatile int self_id = active_fiber_id;
+	fiber_t* current_fiber = get_fiber_by_id(self_id); // Should never return NULL
 
 	current_fiber->last_usage = time(NULL);
 
 	fiber_t* lru_fiber = get_lru_fiber();
 
-	if (setjmp(current_fiber->context) == 0)
+	int setjmp_retval = setjmp(current_fiber->context);
+
+	if (setjmp_retval == 0)
 	{
 		longjmp(lru_fiber->context, 1);
 	}
+	else if (setjmp_retval == 1)
+	{
+		// Return to regular execution
+	}
+	else if (setjmp_retval == 2)
+	{
+		// Kill the previous fiber
+		kill_fiber(get_fiber_by_id(active_fiber_id));
+	}
+
+	active_fiber_id = self_id;
 }
 
 int fibers9_self()
@@ -195,7 +226,7 @@ void fibers9_destroy()
 
 	for (int i = 1; i < MAX_FIBERS; i++)
 	{
-		fiber_reset(&(fibers[i]));
+		reset_fiber(&(fibers[i]));
 	}
 
 	active_fiber_id = FIBERS9_NONACTIVE_FIBER_ID;
