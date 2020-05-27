@@ -12,12 +12,6 @@
 #include <stdlib.h>
 #include "fibers9.h"
 
-void error_exit(const char* msg)
-{
-	perror(msg);
-	exit(-1);
-}
-
 void perform_action(char letter)
 {
 	while (1)
@@ -27,7 +21,7 @@ void perform_action(char letter)
 			printf("%c", letter);
 		}
 
-		printf(" %d\n", fibers9_self());
+		printf(" (FID: %d)\n", fibers9_self());
 
 		fflush(stdout);
 
@@ -47,7 +41,7 @@ void* thread_function(void* arg)
 
 int main(int argc, char* argv[])
 {
-	fibers9_init();
+	fibers9_reset();
 
 	char letter;
 
@@ -56,13 +50,14 @@ int main(int argc, char* argv[])
 		char* current_letter = (char *) malloc(sizeof(char));
 		*current_letter = letter;
 
-		if (fibers9_create(thread_function, (void *) current_letter) == 0)
+		if (fibers9_create(thread_function, (void *) current_letter) == FIBERS9_ERROR_VALUE)
 		{
-			error_exit("Fiber creation failed");
+			perror("fibers9_create failed");
+			exit(-1);
 		}
 	}
 
 	perform_action(letter);
 
-	fibers9_destroy();
+	fibers9_reset();
 }
