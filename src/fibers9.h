@@ -9,9 +9,6 @@
  */
 
 #include <setjmp.h>
-#include <time.h>
-
-#define MAX_FIBERS (100)
 
 typedef void* (*fiber_main_t) (void*);
 

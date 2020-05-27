@@ -9,6 +9,7 @@
  */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include "fibers9.h"
 
 void error_exit(const char* msg)
@@ -40,6 +41,8 @@ void* thread_function(void* arg)
 	free(arg);
 
 	perform_action(letter);
+
+	return NULL;
 }
 
 int main(int argc, char* argv[])
@@ -48,7 +51,7 @@ int main(int argc, char* argv[])
 
 	char letter;
 
-	for (letter = 'A'; letter < 'Z'; letter++)
+	for (letter = 'Z'; letter > 'A'; letter--)
 	{
 		char* current_letter = (char *) malloc(sizeof(char));
 		*current_letter = letter;

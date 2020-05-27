@@ -6,10 +6,12 @@
  *      Author: Teddy Kishinevsky
  */
 
+#include <stdlib.h>
 #include "fibers9.h"
 
 #define KB (1024)
 #define MB (1000 * KB)
+#define MAX_FIBERS (100)
 
 #define FIBERS9_NONACTIVE_FIBER_ID (-1)
 #define FIBERS9_ERROR_VALUE (-1)
@@ -17,14 +19,21 @@
 typedef struct fiber_s
 {
 	int id;
-	time_t last_usage;
 	jmp_buf context;
 	fiber_main_t func_to_call;
 	void* func_argument;
 	void* stack;
 } fiber_t;
 
+typedef struct fiber_queue_s
+{
+	int fiber_ids[MAX_FIBERS];
+	int head_index;
+	int tail_index;
+} fiber_queue_t;
+
 fiber_t fibers[MAX_FIBERS];
+fiber_queue_t scheduling_queue;
 int active_fiber_id;
 
 static fiber_t* get_free_fiber()
@@ -62,7 +71,7 @@ static int get_free_id()
 	}
 
 	// MAX_FIBERS has been reached
-	if (free_id == 100)
+	if (free_id == MAX_FIBERS)
 	{
 		return FIBERS9_ERROR_VALUE;
 	}
@@ -83,27 +92,9 @@ static fiber_t* get_fiber_by_id(int id)
 	return NULL;
 }
 
-static fiber_t* get_lru_fiber()
-{
-	fiber_t* lru_fiber = &(fibers[0]);
-	time_t lru_fiber_time = lru_fiber->last_usage;
-
-	for (int i = 1; i < MAX_FIBERS; i++)
-	{
-		if ((fibers[i].last_usage <= lru_fiber_time) && (fibers[i].id != FIBERS9_NONACTIVE_FIBER_ID))
-		{
-			lru_fiber = &(fibers[i]);
-			lru_fiber_time = fibers[i].last_usage;
-		}
-	}
-
-	return lru_fiber;
-}
-
 static void reset_fiber(fiber_t* target)
 {
 	target->id = FIBERS9_NONACTIVE_FIBER_ID;
-	target->last_usage = 0;
 	target->func_to_call = NULL;
 	target->func_argument = NULL;
 	target->stack = NULL;
@@ -115,12 +106,36 @@ static void kill_fiber(fiber_t* dead_fiber)
 	reset_fiber(dead_fiber);
 }
 
+static void fibers9_init_queue()
+{
+	// Initializing the queue
+	scheduling_queue.head_index = 0;
+	scheduling_queue.tail_index = 0;
+
+	for (int i = 1; i < MAX_FIBERS; i++)
+	{
+		scheduling_queue.fiber_ids[i] = FIBERS9_NONACTIVE_FIBER_ID;
+	}
+}
+
+static void fibers9_scheduling_enqueue(int id)
+{
+	scheduling_queue.fiber_ids[scheduling_queue.tail_index] = id;
+	scheduling_queue.tail_index = (scheduling_queue.tail_index + 1) % MAX_FIBERS;
+}
+
+static int fibers9_scheduling_dequeue()
+{
+	int dequeued = scheduling_queue.fiber_ids[scheduling_queue.head_index];
+	scheduling_queue.fiber_ids[scheduling_queue.head_index] = FIBERS9_NONACTIVE_FIBER_ID;
+	scheduling_queue.head_index = (scheduling_queue.head_index + 1) % MAX_FIBERS;
+
+	return dequeued;
+}
+
 void fibers9_init()
 {
 	// Reserved for further actions, if needed
-
-	fiber_t current_fiber;
-
 	for (int i = 0; i < MAX_FIBERS; i++)
 	{
 		reset_fiber(&(fibers[i]));
@@ -130,12 +145,13 @@ void fibers9_init()
 	// Moreover, its function/arg/stack are all NULL, because they are never used.
 	fibers[0].id = 0;
 	active_fiber_id = fibers[0].id;
+
+	fibers9_init_queue();
 }
 
 int fibers9_create(fiber_main_t func_to_call, void* arg)
 {
 	fiber_t* old_fiber = get_fiber_by_id(active_fiber_id);
-	old_fiber->last_usage = time(NULL);
 
 	volatile int self_id = active_fiber_id;
 	volatile int new_id = get_free_id();
@@ -145,6 +161,8 @@ int fibers9_create(fiber_main_t func_to_call, void* arg)
 	{
 		return 0;
 	}
+
+	fibers9_scheduling_enqueue(active_fiber_id);
 
 	new_fiber->id = new_id;
 	new_fiber->func_to_call = func_to_call;
@@ -190,9 +208,9 @@ void fibers9_yield()
 	volatile int self_id = active_fiber_id;
 	fiber_t* current_fiber = get_fiber_by_id(self_id); // Should never return NULL
 
-	current_fiber->last_usage = time(NULL);
+	fibers9_scheduling_enqueue(self_id);
 
-	fiber_t* lru_fiber = get_lru_fiber();
+	fiber_t* lru_fiber = get_fiber_by_id(fibers9_scheduling_dequeue());
 
 	int setjmp_retval = setjmp(current_fiber->context);
 
@@ -221,9 +239,6 @@ int fibers9_self()
 void fibers9_destroy()
 {
 	// Reserved for further actions, if needed
-
-	fiber_t current_fiber;
-
 	for (int i = 1; i < MAX_FIBERS; i++)
 	{
 		reset_fiber(&(fibers[i]));
